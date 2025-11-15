@@ -6,8 +6,9 @@ Calculates carbon emissions for different digital activities based on emission c
 # Emission coefficients (in kg CO₂)
 EMISSION_COEFFICIENTS = {
     # Email emissions
-    'email_base': 0.004,  # 4g per email (base)
-    'email_attachment_per_mb': 0.0003,  # 0.3g per MB of attachment
+    # Aligning with user formula: C = 0.3 g base, A = 15 g per MB
+    'email_base': 0.0003,  # 0.3 g per email (base) -> 0.0003 kg
+    'email_attachment_per_mb': 0.015,  # 15 g per MB -> 0.015 kg per MB
     
     # Meeting emissions
     'meeting_per_hour_video': 1.6,  # 1.6kg per hour with video

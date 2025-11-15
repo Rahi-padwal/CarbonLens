@@ -95,7 +95,11 @@ def list_activities():
 
     print(f"[Activities API] Request params: userEmail={user_email}, userId={user_id}, limit={limit}, since={since_str}, until={until_str}")
 
-    activities_ref = get_collection('activities')
+    try:
+        activities_ref = get_collection('activities')
+    except Exception as exc:
+        print(f"[Activities API] Firebase unavailable: {exc}")
+        return _error('Firebase not available', details=str(exc)), 503
     # For all-time queries (no date filters), use higher limit
     query_limit = limit * 5 if not since_str and not until_str else limit * 3
     query = activities_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(query_limit)

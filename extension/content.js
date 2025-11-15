@@ -38,6 +38,42 @@
   let mode = 'awareness';
   let _lastDispatchAt = 0; // simple dedupe guard to avoid double-dispatch on click+keyboard
 
+  // Helpers to parse human-readable sizes like '234 KB' or '1.2 MB' into MB
+  function parseSizeToMb(text) {
+    if (!text) return 0;
+    const m = String(text).match(/([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|B)/i);
+    if (!m) return 0;
+    const value = parseFloat(m[1]);
+    const unit = m[2].toUpperCase();
+    if (unit === 'B') return value / (1024 * 1024);
+    if (unit === 'KB') return value / 1024;
+    return value; // MB
+  }
+
+  // Scan a compose root element for attachment size hints and sum them (MB)
+  function computeAttachmentTotalMb(composeRoot) {
+    try {
+      let totalMb = 0;
+      if (!composeRoot) return 0;
+      const candidates = composeRoot.querySelectorAll('div[aria-label], span, div, li');
+      for (const el of candidates) {
+        try {
+          const txt = (el.getAttribute && el.getAttribute('aria-label')) || el.innerText || el.textContent || '';
+          if (!txt) continue;
+          if (/\b(KB|MB|B)\b/i.test(txt)) {
+            const mb = parseSizeToMb(txt);
+            if (mb > 0) totalMb += mb;
+          }
+        } catch (e) {
+          // ignore per-element errors
+        }
+      }
+      return totalMb;
+    } catch (e) {
+      return 0;
+    }
+  }
+
   // Listen for messages from background (mode updates, pings)
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || message.source !== 'carbonlens-background') {
@@ -534,6 +570,10 @@
     const attachmentCount = attachmentsContainer ? attachmentsContainer.querySelectorAll('div[role="listitem"]').length : 0;
     const accountEmail = getGmailAccountEmail();
 
+    // Estimate attachment total size (MB) from compose DOM
+    const totalMb = computeAttachmentTotalMb(composeRoot) || 0;
+    const attachmentBytes = Math.round(totalMb * 1_000_000);
+
     return {
       activityType: ACTIVITY_TYPE.EMAIL,
       timestamp: new Date().toISOString(),
@@ -542,6 +582,9 @@
       recipients: normalizeRecipientList(recipients),
       bodyPreview,
       attachmentCount,
+      // include both camelCase and snake_case keys to satisfy different backends
+      attachmentBytes,
+      attachment_bytes: attachmentBytes,
       direction: 'outbound',
       sender: accountEmail,
       user_email: accountEmail,
@@ -652,6 +695,10 @@
     const attachmentCount = attachmentContainer ? attachmentContainer.querySelectorAll('[role="listitem"]').length : 0;
     const accountEmail = getOutlookAccountEmail();
 
+    // Estimate attachment size for Outlook compose
+    const totalMb = computeAttachmentTotalMb(composeRoot) || 0;
+    const attachmentBytes = Math.round(totalMb * 1_000_000);
+
     return {
       activityType: ACTIVITY_TYPE.EMAIL,
       timestamp: new Date().toISOString(),
@@ -660,6 +707,8 @@
       recipients: normalizeRecipientList(recipients),
       bodyPreview,
       attachmentCount,
+      attachmentBytes,
+      attachment_bytes: attachmentBytes,
       direction: 'outbound',
       sender: accountEmail,
       user_email: accountEmail,

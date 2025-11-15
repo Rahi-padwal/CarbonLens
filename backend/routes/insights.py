@@ -32,7 +32,11 @@ def get_insights():
 
     try:
         # Get activities for the period
-        activities_ref = get_collection('activities')
+        try:
+            activities_ref = get_collection('activities')
+        except Exception as exc:
+            print(f"[Insights API] Firebase unavailable: {exc}")
+            return jsonify({'error': 'Firebase not available', 'details': str(exc)}), 503
         query = activities_ref.order_by('timestamp', direction=admin_firestore.Query.DESCENDING).limit(500)
 
         # Calculate date range based on period
