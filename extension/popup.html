@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CarbonLens</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg-gradient: linear-gradient(135deg, #0f9d58 0%, #1abc9c 60%, #4fc3f7 100%);
+        --surface: rgba(255, 255, 255, 0.92);
+        --surface-dark: rgba(14, 23, 30, 0.9);
+        --text-primary: #0c1a24;
+        --text-secondary: #4f6b7a;
+        --accent: #0f9d58;
+        --warning: #f57c00;
+        --danger: #e53935;
+        --success: #33b679;
+        font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+
+      body {
+        margin: 0;
+        width: 340px;
+        min-height: 420px;
+        background: var(--bg-gradient);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .popup {
+        width: calc(100% - 24px);
+        margin: 12px;
+        padding: 18px;
+        background: var(--surface);
+        box-shadow: 0 18px 35px rgba(15, 64, 38, 0.25);
+        border-radius: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        backdrop-filter: blur(10px);
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .logo {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .logo h1 {
+        font-size: 18px;
+        margin: 0;
+        color: var(--text-primary);
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .logo span {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+
+      .mode-pill {
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        background: rgba(15, 157, 88, 0.12);
+        color: var(--accent);
+      }
+
+      .mode-pill.silent {
+        background: rgba(79, 91, 102, 0.16);
+        color: #4e646f;
+      }
+
+      .status-card {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(15, 64, 38, 0.08);
+      }
+
+      .status-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 13px;
+      }
+
+      .status-label {
+        color: var(--text-secondary);
+      }
+
+      .status-value {
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .status-value.success {
+        color: var(--success);
+      }
+
+      .status-value.danger {
+        color: var(--danger);
+      }
+
+      .status-value.warning {
+        color: var(--warning);
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+
+      .stat-card {
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(12, 26, 36, 0.04);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .stat-value {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+
+      .stat-label {
+        font-size: 12px;
+        color: var(--text-secondary);
+      }
+
+      .controls {
+        display: grid;
+        gap: 12px;
+      }
+
+      .mode-toggle {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+
+      .mode-button {
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(15, 64, 38, 0.12);
+        background: rgba(255, 255, 255, 0.8);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .mode-button.active {
+        border-color: rgba(15, 157, 88, 0.35);
+        background: rgba(15, 157, 88, 0.12);
+        color: var(--accent);
+      }
+
+      .mode-button:active {
+        transform: translateY(1px);
+      }
+
+      .backend-card {
+        display: grid;
+        gap: 8px;
+        background: rgba(12, 26, 36, 0.06);
+        border-radius: 14px;
+        padding: 12px;
+      }
+
+      .backend-card label {
+        font-size: 12px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .backend-input {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .backend-input input {
+        flex: 1;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(15, 64, 38, 0.18);
+        font-size: 13px;
+      }
+
+      .backend-input button {
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: none;
+        background: var(--accent);
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .backend-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .secondary-btn {
+        flex: 1;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(12, 26, 36, 0.12);
+        background: rgba(255, 255, 255, 0.8);
+        font-weight: 600;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      .feedback {
+        font-size: 12px;
+        color: var(--text-secondary);
+        min-height: 16px;
+      }
+
+      .feedback.success {
+        color: var(--success);
+      }
+
+      .feedback.error {
+        color: var(--danger);
+      }
+
+      footer {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+
+      footer span {
+        display: block;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --surface: rgba(11, 18, 24, 0.92);
+          --text-primary: #e9f5ee;
+          --text-secondary: #99b4c1;
+          --accent: #59f6b0;
+          --success: #59f6b0;
+        }
+
+        .popup {
+          box-shadow: 0 18px 30px rgba(0, 0, 0, 0.45);
+        }
+
+        .status-card {
+          background: rgba(89, 246, 176, 0.12);
+        }
+
+        .stat-card {
+          background: rgba(233, 245, 238, 0.06);
+        }
+
+        .mode-button {
+          background: rgba(17, 27, 38, 0.6);
+          border: 1px solid rgba(89, 246, 176, 0.18);
+          color: var(--text-secondary);
+        }
+
+        .mode-button.active {
+          border-color: rgba(89, 246, 176, 0.6);
+          background: rgba(89, 246, 176, 0.2);
+          color: #0b1a24;
+        }
+
+        .backend-card {
+          background: rgba(17, 27, 38, 0.6);
+        }
+
+        .backend-input input {
+          background: rgba(11, 18, 24, 0.9);
+          color: var(--text-primary);
+          border-color: rgba(89, 246, 176, 0.18);
+        }
+
+        .secondary-btn {
+          background: rgba(17, 27, 38, 0.6);
+          border-color: rgba(89, 246, 176, 0.18);
+          color: var(--text-primary);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="popup">
+      <header class="header">
+        <div class="logo">
+          <h1>CarbonLens</h1>
+          <span>Digital Carbon Tracker</span>
+        </div>
+        <span id="modePill" class="mode-pill">Awareness Mode</span>
+      </header>
+
+      <section class="status-card">
+        <div class="status-row">
+          <span class="status-label">Backend</span>
+          <span id="backendStatus" class="status-value warning">Checking...</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Last sync</span>
+          <span id="lastSyncValue" class="status-value">--</span>
+        </div>
+      </section>
+
+      <section class="stats-grid">
+        <article class="stat-card">
+          <span id="totalActivities" class="stat-value">0</span>
+          <span class="stat-label">Emails tracked this session</span>
+        </article>
+        <article class="stat-card">
+          <span id="lastStatus" class="stat-value">Idle</span>
+          <span class="stat-label">Sync status</span>
+        </article>
+      </section>
+
+      <section class="controls">
+        <div class="mode-toggle">
+          <button id="awarenessBtn" class="mode-button">Awareness</button>
+          <button id="silentBtn" class="mode-button">Silent</button>
+        </div>
+        <div class="backend-card">
+          <label for="backendInput">Backend API URL</label>
+          <div class="backend-input">
+            <input id="backendInput" type="text" placeholder="https://api.yourdomain.com" />
+            <button id="saveBackendBtn">Save</button>
+          </div>
+          <div class="backend-actions">
+            <button id="refreshHealthBtn" class="secondary-btn">Refresh status</button>
+            <button id="clearStatsBtn" class="secondary-btn">Reset stats</button>
+          </div>
+          <div id="feedback" class="feedback"></div>
+        </div>
+      </section>
+
+      <footer>
+        <span id="versionLabel">v1.0.0</span>
+        <span>Stay climate conscious 🌿</span>
+      </footer>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

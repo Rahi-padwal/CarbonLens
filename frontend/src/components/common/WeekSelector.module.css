@@ -1,0 +1,17 @@
+.wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.rangeLabel {
+  font-weight: 600;
+  color: white;
+}
+
+.wrapper button + button {
+  margin-left: 8px;
+}

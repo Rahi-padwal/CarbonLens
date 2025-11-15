@@ -1,0 +1,14 @@
+.table th {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.table td {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.type {
+  font-weight: 600;
+  text-transform: capitalize;
+}
