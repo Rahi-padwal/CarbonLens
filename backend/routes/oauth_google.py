@@ -301,20 +301,16 @@ def google_login():
             }
         }
 
-        # Use full scope URIs for userinfo to avoid mismatches
         scopes = [
             'openid',
-            'https://www.googleapis.com/auth/userinfo.email',
-            'https://www.googleapis.com/auth/userinfo.profile',
+            'email',
+            'profile',
             'https://www.googleapis.com/auth/gmail.readonly',
             'https://www.googleapis.com/auth/gmail.send',
         ]
 
         flow = Flow.from_client_config(client_config, scopes=scopes, redirect_uri=REDIRECT_URI)
-        # Do not include previously granted scopes automatically; this prevents
-        # Google from merging older scopes into the token response which can
-        # trigger a "Scope has changed" error during token exchange.
-        auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes=False, prompt='consent')
+        auth_url, state = flow.authorization_url(access_type='offline', include_granted_scopes='true', prompt='consent')
 
         # Redirect directly to Google's consent page
         return redirect(auth_url)
@@ -339,7 +335,10 @@ def google_callback():
             }
         }
 
-        # Use full scope URIs for userinfo to avoid mismatches
+        # Request exact scopes (use userinfo URIs) and handle cases where
+        # Google returns a different scope set. If a "Scope has changed"
+        # error occurs during token exchange, restart the login flow to
+        # force a fresh consent screen.
         scopes = [
             'openid',
             'https://www.googleapis.com/auth/userinfo.email',
@@ -348,10 +347,72 @@ def google_callback():
             'https://www.googleapis.com/auth/gmail.send',
         ]
 
-        flow = Flow.from_client_config(client_config, scopes=scopes, redirect_uri=REDIRECT_URI)
-        # Exchange the authorization response (includes code) for tokens
-        flow.fetch_token(authorization_response=request.url)
-        creds = flow.credentials
+        # If Google returned a scope set different than we requested, avoid
+        # calling oauthlib.fetch_token (which will consume the single-use code
+        # and may raise). Instead perform a manual token exchange using the
+        # code and build Credentials from the token response. This prevents
+        # invalid_grant caused by retrying fetch_token with the same code.
+        returned_scope = request.args.get('scope') or request.form.get('scope')
+        do_manual_exchange = False
+        if returned_scope:
+            returned_scopes_set = set(s for s in returned_scope.split() if s)
+            requested_scopes_set = set(scopes)
+            if returned_scopes_set != requested_scopes_set:
+                print('[Google OAuth] Detected scope mismatch. Requested:', requested_scopes_set, 'Returned:', returned_scopes_set)
+                do_manual_exchange = True
+
+        if do_manual_exchange:
+            # Manual token exchange path
+            try:
+                token_uri = client_config['web']['token_uri']
+                code = request.args.get('code') or request.form.get('code')
+                if not code:
+                    raise ValueError('Authorization code missing for manual token exchange')
+
+                post_data = {
+                    'code': code,
+                    'client_id': CLIENT_ID,
+                    'client_secret': CLIENT_SECRET,
+                    'redirect_uri': REDIRECT_URI,
+                    'grant_type': 'authorization_code',
+                }
+                print('[Google OAuth] Performing manual token exchange at', token_uri)
+                token_resp = requests.post(token_uri, data=post_data, timeout=15)
+                try:
+                    token_json = token_resp.json()
+                except Exception:
+                    token_json = None
+
+                if token_resp.status_code != 200 or not token_json or 'access_token' not in token_json:
+                    print('[Google OAuth] Manual token exchange failed', token_resp.status_code, token_resp.text)
+                    # Return a helpful error during development
+                    token_resp.raise_for_status()
+
+                access_token = token_json.get('access_token')
+                refresh_token = token_json.get('refresh_token')
+                scope_str = token_json.get('scope') or returned_scope
+                returned_scopes = [s for s in scope_str.split() if s]
+
+                # Build Credentials manually from token response
+                creds = Credentials(
+                    token=access_token,
+                    refresh_token=refresh_token,
+                    token_uri=token_uri,
+                    client_id=CLIENT_ID,
+                    client_secret=CLIENT_SECRET,
+                    scopes=returned_scopes,
+                )
+                print('[Google OAuth] Manual token exchange succeeded. Scopes:', returned_scopes)
+            except Exception as retry_err:
+                import traceback
+                tb = traceback.format_exc()
+                print('[Google OAuth] Manual token exchange failed:', tb)
+                raise retry_err
+        else:
+            # Normal oauthlib flow: exchange using Flow which validates scopes
+            flow = Flow.from_client_config(client_config, scopes=scopes, redirect_uri=REDIRECT_URI)
+            flow.fetch_token(authorization_response=request.url)
+            creds = flow.credentials
 
         access_token = creds.token
         refresh_token = getattr(creds, 'refresh_token', None)
@@ -404,6 +465,19 @@ def google_callback():
         return redirect(redirect_url)
 
     except Exception as e:
+        # Print full traceback to server logs for easier debugging
+        import traceback
+        tb = traceback.format_exc()
+        print('[Google OAuth] Callback exception:', tb)
+
+        # If running in debug mode, return the traceback in the response to help local debugging
+        try:
+            debug_flag = os.getenv('DEBUG', 'False').lower() in ('1', 'true', 'yes')
+        except Exception:
+            debug_flag = False
+
+        if debug_flag:
+            return jsonify({'error': 'Google OAuth callback failed', 'message': str(e), 'trace': tb}), 500
         return jsonify({'error': 'Google OAuth callback failed', 'message': str(e)}), 500
 
 

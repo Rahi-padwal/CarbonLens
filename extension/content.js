@@ -29,26 +29,66 @@
   } else if (host.includes('outlook.office.com') || host.includes('outlook.live.com')) {
     currentPlatform = PLATFORM.OUTLOOK;
     console.log('[CarbonLens] Detected Outlook platform, initializing observer');
-    initOutlookObserver();
-  } else {
-    console.warn('[CarbonLens] Unsupported host for content script:', host);
-    return;
-  }
+      // sendMessage with retry/backoff in case the service worker is inactive
+      const maxRetries = 3;
+      const retryDelayBase = 300; // ms
 
-  console.log('[CarbonLens] Content script initialization complete');
+      function sendWithRetry(attempt) {
+        try {
+          chrome.runtime.sendMessage(message, (response) => {
+            // Check for runtime errors first
+            if (chrome.runtime.lastError) {
+              console.error('[CarbonLens] Runtime error sending message (attempt', attempt, '):', chrome.runtime.lastError.message);
+              if (attempt < maxRetries) {
+                const delay = retryDelayBase * Math.pow(2, attempt - 1);
+                console.debug('[CarbonLens] Retrying sendMessage in', delay, 'ms');
+                setTimeout(() => sendWithRetry(attempt + 1), delay);
+              } else {
+                console.error('[CarbonLens] Failed to send activity after', maxRetries, 'attempts; queuing locally');
+                try {
+                  // Queue the activity in storage so background can pick it up later
+                  chrome.storage.local.get({ pendingActivities: [] }, (data) => {
+                    const list = data.pendingActivities || [];
+                    list.push({ payload, platform: currentPlatform, ts: new Date().toISOString() });
+                    chrome.storage.local.set({ pendingActivities: list }, () => {
+                      if (chrome.runtime.lastError) {
+                        console.error('[CarbonLens] Failed to queue pending activity:', chrome.runtime.lastError.message);
+                      } else {
+                        console.debug('[CarbonLens] Activity queued locally for later delivery');
+                      }
+                    });
+                  });
+                } catch (qerr) {
+                  console.error('[CarbonLens] Error queueing activity locally:', qerr);
+                }
+              }
+              return;
+            }
 
-  let mode = 'awareness'; // Default mode; background can override via messaging.
-  let _lastDispatchAt = 0; // simple dedupe guard to avoid double-dispatch on click+keyboard
+            // Check response
+            if (response) {
+              if (response.acknowledged) {
+                console.log('[CarbonLens] ✅ Activity acknowledged by background script');
+              } else if (response.error) {
+                console.error('[CarbonLens] ❌ Background script error:', response.error);
+              } else {
+                console.warn('[CarbonLens] Unexpected response format:', response);
+              }
+            } else {
+              console.warn('[CarbonLens] No response from background script (may have disconnected)');
+            }
+          });
+        } catch (err) {
+          console.error('[CarbonLens] Exception while sending message (attempt', attempt, '):', err);
+          if (attempt < maxRetries) {
+            const delay = retryDelayBase * Math.pow(2, attempt - 1);
+            setTimeout(() => sendWithRetry(attempt + 1), delay);
+          }
+        }
+      }
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!message || message.source !== 'carbonlens-background') {
-      return; // Ignore unrelated messages
-    }
-
-    switch (message.type) {
-      case 'PING':
-        sendResponse({ source: 'carbonlens-content', type: 'PONG' });
-        break;
+      // Start first attempt
+      sendWithRetry(1);
       case 'UPDATE_MODE':
         mode = message.payload?.mode ?? mode;
         console.debug('[CarbonLens] Mode updated via background:', mode);

@@ -202,6 +202,12 @@ async function handleActivityEvent(payload, platform, mode) {
     STATE.lastSyncStatus = 'syncing';
     STATE.lastSyncAttemptAt = new Date().toISOString();
     persistState(['lastSyncStatus', 'lastSyncAt', 'lastSyncAttemptAt']);
+    // Broadcast updated state to any open popups/content so UI updates immediately
+    try {
+      chrome.runtime.sendMessage({ source: 'carbonlens-background', type: 'STATE_UPDATED', state: getSerializableState() }, () => {});
+    } catch (e) {
+      console.warn('[CarbonLens Background] Error broadcasting STATE_UPDATED (syncing):', e);
+    }
   } catch (err) {
     console.warn('[CarbonLens Background] Failed to mark sync attempt:', err);
   }
@@ -231,6 +237,11 @@ async function handleActivityEvent(payload, platform, mode) {
     }
     try {
       persistState(['lastSyncStatus', 'lastSyncAt']);
+      try {
+        chrome.runtime.sendMessage({ source: 'carbonlens-background', type: 'STATE_UPDATED', state: getSerializableState() }, () => {});
+      } catch (e) {
+        console.warn('[CarbonLens Background] Error broadcasting STATE_UPDATED (success):', e);
+      }
     } catch (err) {
       console.warn('[CarbonLens Background] Error persisting success state:', err);
     }
@@ -241,6 +252,11 @@ async function handleActivityEvent(payload, platform, mode) {
     STATE.lastSyncAt = new Date().toISOString();
     try {
       persistState(['lastSyncStatus', 'lastSyncAt']);
+      try {
+        chrome.runtime.sendMessage({ source: 'carbonlens-background', type: 'STATE_UPDATED', state: getSerializableState() }, () => {});
+      } catch (e) {
+        console.warn('[CarbonLens Background] Error broadcasting STATE_UPDATED (error):', e);
+      }
     } catch (err) {
       console.warn('[CarbonLens Background] Error persisting error state:', err);
     }
@@ -545,7 +561,7 @@ function broadcastMode() {
 
 function clearStats() {
   STATE.totalActivitiesTracked = 0;
-  STATE.lastSyncStatus = 'idle';
+  STATE.lastSyncStatus = 'synced';
   STATE.lastSyncAt = null;
   persistState(['totalActivitiesTracked', 'lastSyncStatus', 'lastSyncAt']);
 }
@@ -562,8 +578,25 @@ function persistState(fields = []) {
     }
   });
 
-  if (Object.keys(payload).length) {
-    chrome.storage.local.set(payload);
+    if (Object.keys(payload).length) {
+    try {
+      console.debug('[CarbonLens Background] persistState writing to storage:', payload);
+      chrome.storage.local.set(payload, () => {
+        if (chrome.runtime.lastError) {
+          console.error('[CarbonLens Background] persistState failed:', chrome.runtime.lastError.message, payload);
+        } else {
+          console.debug('[CarbonLens Background] persistState saved:', payload);
+          // After storage is confirmed, broadcast the updated state so popups update reliably
+          try {
+            chrome.runtime.sendMessage({ source: 'carbonlens-background', type: 'STATE_UPDATED', state: getSerializableState() }, () => {});
+          } catch (e) {
+            console.warn('[CarbonLens Background] Error broadcasting STATE_UPDATED from persistState:', e);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('[CarbonLens Background] persistState exception:', err, payload);
+    }
   }
 }
 

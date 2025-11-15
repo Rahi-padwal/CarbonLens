@@ -25,8 +25,9 @@ document.addEventListener('DOMContentLoaded', () => {
   cacheElements();
   bindEvents();
   setVersionLabel();
-  requestState();
+  setupRuntimeListener();
   setupStorageListener();
+  requestState();
 });
 
 function cacheElements() {
@@ -185,7 +186,7 @@ function updateLastSync(lastSyncAt, lastSyncStatus) {
 
   if (!lastSyncAt) {
     elements.lastSyncValue.textContent = 'No sync yet';
-    // Even if there's no timestamp, show the last sync status (success/error/idle)
+    // Even if there's no timestamp, show the last sync status (success/error/Synced)
     if (elements.lastStatus) {
       const statusText =
         lastSyncStatus === 'success'
@@ -194,7 +195,7 @@ function updateLastSync(lastSyncAt, lastSyncStatus) {
           ? 'Sync error'
           : lastSyncStatus === 'syncing'
           ? 'Syncing...'
-          : 'Idle';
+          : 'Synced';
       elements.lastStatus.textContent = statusText;
     }
     return;
@@ -210,7 +211,7 @@ function updateLastSync(lastSyncAt, lastSyncStatus) {
         ? 'Synced'
         : lastSyncStatus === 'error'
         ? 'Sync error'
-        : 'Idle';
+        : 'Synced';
     elements.lastStatus.textContent = statusText;
   }
 }
@@ -221,7 +222,7 @@ function updateStats(totalActivities, lastSyncStatus) {
   }
 
   if (elements.lastStatus && !latestState?.lastSyncAt) {
-    elements.lastStatus.textContent = 'Idle';
+    elements.lastStatus.textContent = 'Synced';
   }
 
   if (elements.lastStatus && latestState?.lastSyncAt) {
@@ -230,7 +231,7 @@ function updateStats(totalActivities, lastSyncStatus) {
         ? 'Synced'
         : lastSyncStatus === 'error'
         ? 'Sync error'
-        : 'Idle';
+        : 'Synced';
     elements.lastStatus.textContent = statusText;
   }
 }
@@ -270,4 +271,26 @@ function setupStorageListener() {
       requestState();
     }
   });
+}
+
+function setupRuntimeListener() {
+  // Listen for background broadcasts (STATE_UPDATED) so popup updates immediately
+  try {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (!message || message.source !== 'carbonlens-background') return;
+
+      if (message.type === 'STATE_UPDATED' && message.state) {
+        latestState = message.state;
+        renderState();
+      }
+
+      // Allow senders to get a response if needed
+      if (typeof sendResponse === 'function') {
+        try { sendResponse({ success: true }); } catch (e) {}
+      }
+      return true;
+    });
+  } catch (err) {
+    console.warn('[CarbonLens Popup] Could not attach runtime message listener:', err);
+  }
 }
