@@ -153,6 +153,25 @@ def list_activities():
         created_at = data.get('created_at')
         if isinstance(created_at, datetime):
             data['created_at'] = created_at.isoformat()
+        # Ensure emission fields exist: compute if missing to keep frontend consistent
+        try:
+            activity_type_field = data.get('activity_type') or data.get('activityType') or ''
+            if activity_type_field == 'email':
+                # prefer existing emission fields
+                existing = data.get('emission_kg') or data.get('emissionKg')
+                if not existing:
+                    payload = data.get('payload') or {}
+                    attachment_mb = (payload.get('attachment_bytes') or payload.get('attachmentBytes') or 0) / 1_000_000
+                    recipients_count = max(len(payload.get('recipients') or []) or 1, 1)
+                    try:
+                        computed = calculate_activity_emission('email', attachment_size_mb=attachment_mb, recipients_count=recipients_count)
+                        data['emission_kg'] = float(computed)
+                        print(f"[Activities API] Computed missing emission for doc {doc.id}: {computed} kg")
+                    except Exception as e:
+                        print(f"[Activities API] Failed to compute fallback emission for doc {doc.id}: {e}")
+        except Exception:
+            # don't let fallback computation break listing
+            pass
 
         items.append(data)
         if len(items) >= limit:

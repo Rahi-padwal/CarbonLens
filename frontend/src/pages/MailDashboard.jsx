@@ -13,6 +13,13 @@ import { DataContext } from '../context/DataContext';
 import MetricCard from '../components/common/MetricCard';
 import ActivityTable from '../components/common/ActivityTable';
 
+function formatEmissionDisplay(emissionKg) {
+  const kg = Number(emissionKg) || 0;
+  if (kg <= 0) return '0';
+  if (kg < 0.001) return `${(kg * 1000).toFixed(1)} g`;
+  return `${kg.toFixed(3)} kg`;
+}
+
 function MailDashboard() {
   const { activities, aggregations } = useContext(DataContext);
   const [viewMode, setViewMode] = useState('week'); // 'week' or 'month'
@@ -146,13 +153,13 @@ function MailDashboard() {
         <MetricCard
           title={viewMode === 'week' ? 'Emails this week' : 'Emails this month'}
           value={displayEmails.length}
-          footer={`Total CO₂ ${displayEmails.reduce((acc, email) => acc + (email.emission_kg || email.emissionKg || 0), 0).toFixed(3)} kg`}
+          footer={`Total CO₂ ${formatEmissionDisplay(displayEmails.reduce((acc, email) => acc + (email.emission_kg || email.emissionKg || 0), 0))}`}
           icon="✉️"
         />
         <MetricCard
           title="All time emails"
           value={allEmails.length}
-          footer={`Total CO₂ ${allEmails.reduce((acc, email) => acc + (email.emission_kg || email.emissionKg || 0), 0).toFixed(3)} kg`}
+          footer={`Total CO₂ ${formatEmissionDisplay(allEmails.reduce((acc, email) => acc + (email.emission_kg || email.emissionKg || 0), 0))}`}
           icon="📧"
         />
       </div>

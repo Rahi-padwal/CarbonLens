@@ -2,6 +2,15 @@ import React from 'react';
 import dayjs from 'dayjs';
 import styles from './ActivityTable.module.css';
 
+function formatEmissionDisplay(emissionKg) {
+  const kg = Number(emissionKg) || 0;
+  if (kg <= 0) return '0';
+  // If less than 1 gram (0.001 kg), show grams with 1 decimal
+  if (kg < 0.001) return `${(kg * 1000).toFixed(1)} g`;
+  // Otherwise show kg with 3 decimals
+  return `${kg.toFixed(3)} kg`;
+}
+
 function ActivityTable({ activities = [] }) {
   if (!activities.length) {
     return <div className="empty-state">No activities in this range.</div>;
@@ -23,7 +32,7 @@ function ActivityTable({ activities = [] }) {
             <tr key={activity.id || activity.timestamp}>
               <td className={styles.type}>{formatType(activity)}</td>
               <td>{activity.payload?.subject || activity.payload?.title || '—'}</td>
-              <td>{(activity.emission_kg || activity.emissionKg || 0).toFixed(3)}</td>
+              <td>{formatEmissionDisplay(activity.emission_kg || activity.emissionKg || 0)}</td>
               <td>{dayjs(activity.timestamp).format('MMM D, YYYY h:mm A')}</td>
             </tr>
           ))}

@@ -452,7 +452,8 @@
           if (!compose) return;
           const emission = estimateEmailEmission(compose);
           if (!emission) return;
-          const text = `${formatEmissionKg(emission.kg)} will be emitted (${Math.round(emission.grams)} g total)`;
+          const gramsDisplay = emission.grams < 1 ? emission.grams.toFixed(1) : Math.round(emission.grams);
+          const text = `${formatEmissionKg(emission.kg)} will be emitted (${gramsDisplay} g total)`;
           tooltipEl = createTooltip();
           tooltipEl.textContent = text;
           // Position tooltip near the button
