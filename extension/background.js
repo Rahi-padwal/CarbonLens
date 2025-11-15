@@ -147,6 +147,12 @@ async function initializeState() {
       } catch (err) {
         console.warn('[CarbonLens Background] Error resolving stateReady:', err);
       }
+            // After rehydration, try to process any pending activities queued by content scripts
+            try {
+              processPendingActivities().catch((e) => console.warn('[CarbonLens Background] processPendingActivities error:', e));
+            } catch (e) {
+              console.warn('[CarbonLens Background] Failed to start processing pending activities:', e);
+            }
     }
   );
 }
@@ -274,6 +280,70 @@ async function handleActivityEvent(payload, platform, mode) {
 
     // Don't throw error - we've already counted the activity, just log the sync failure
     console.warn('[CarbonLens Background] Activity was counted but backend sync failed');
+  }
+}
+
+// Helpers to read/write pendingActivities from storage (used when content queued events)
+function getPendingActivities() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get({ pendingActivities: [] }, (data) => {
+        if (chrome.runtime.lastError) {
+          console.error('[CarbonLens Background] getPendingActivities failed:', chrome.runtime.lastError.message);
+          return resolve([]);
+        }
+        resolve(Array.isArray(data.pendingActivities) ? data.pendingActivities.slice() : []);
+      });
+    } catch (err) {
+      console.error('[CarbonLens Background] getPendingActivities exception:', err);
+      resolve([]);
+    }
+  });
+}
+
+function setPendingActivities(list) {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.set({ pendingActivities: Array.isArray(list) ? list : [] }, () => {
+        if (chrome.runtime.lastError) {
+          console.error('[CarbonLens Background] setPendingActivities failed:', chrome.runtime.lastError.message);
+        }
+        resolve();
+      });
+    } catch (err) {
+      console.error('[CarbonLens Background] setPendingActivities exception:', err);
+      resolve();
+    }
+  });
+}
+
+// Process any activities queued by the content script when it couldn't reach the service worker.
+// Processes items sequentially and removes items on successful handling. If a processing error
+// occurs, stop further processing to avoid tight retry loops.
+async function processPendingActivities() {
+  try {
+    let list = await getPendingActivities();
+    if (!list || !list.length) return;
+    console.debug('[CarbonLens Background] Found pendingActivities to process:', list.length);
+
+    while (list.length) {
+      const item = list[0];
+      try {
+        // Each queued item has shape: { payload, platform, ts }
+        await handleActivityEvent(item.payload, item.platform, STATE.mode);
+        // Remove the processed item
+        list.shift();
+        await setPendingActivities(list);
+        console.debug('[CarbonLens Background] Processed and removed one pending activity; remaining:', list.length);
+        // small pause between items to avoid rate limits
+        await new Promise((r) => setTimeout(r, 200));
+      } catch (err) {
+        console.warn('[CarbonLens Background] Error processing pending activity - will retry later:', err);
+        break;
+      }
+    }
+  } catch (err) {
+    console.error('[CarbonLens Background] processPendingActivities failed:', err);
   }
 }
 

@@ -21,7 +21,6 @@
   let currentPlatform = null;
 
   console.log('[CarbonLens] Content script loaded on:', host);
-
   if (host.includes('mail.google.com')) {
     currentPlatform = PLATFORM.GMAIL;
     console.log('[CarbonLens] Detected Gmail platform, initializing observer');
@@ -29,6 +28,60 @@
   } else if (host.includes('outlook.office.com') || host.includes('outlook.live.com')) {
     currentPlatform = PLATFORM.OUTLOOK;
     console.log('[CarbonLens] Detected Outlook platform, initializing observer');
+    initOutlookObserver();
+  } else {
+    console.warn('[CarbonLens] Unsupported host for content script:', host);
+    return;
+  }
+
+  // default mode and dedupe guard
+  let mode = 'awareness';
+  let _lastDispatchAt = 0; // simple dedupe guard to avoid double-dispatch on click+keyboard
+
+  // Listen for messages from background (mode updates, pings)
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!message || message.source !== 'carbonlens-background') {
+      return; // Ignore unrelated messages
+    }
+
+    switch (message.type) {
+      case 'PING':
+        sendResponse({ source: 'carbonlens-content', type: 'PONG' });
+        break;
+      case 'UPDATE_MODE':
+        mode = message.payload?.mode ?? mode;
+        console.debug('[CarbonLens] Mode updated via background:', mode);
+        sendResponse({ source: 'carbonlens-content', type: 'MODE_UPDATED', mode });
+        break;
+      default:
+        break;
+    }
+
+    return true;
+  });
+
+  function dispatchActivity(payload) {
+    if (!payload) {
+      console.warn('[CarbonLens] dispatchActivity called with empty payload');
+      return;
+    }
+
+    try {
+      console.log('[CarbonLens] Dispatching activity:', {
+        type: payload.activityType,
+        platform: currentPlatform,
+        subject: payload.subject,
+        user_email: payload.user_email,
+      });
+
+      const message = {
+        source: 'carbonlens-content',
+        type: 'ACTIVITY_DETECTED',
+        platform: currentPlatform,
+        mode,
+        payload,
+      };
+
       // sendMessage with retry/backoff in case the service worker is inactive
       const maxRetries = 3;
       const retryDelayBase = 300; // ms
@@ -89,60 +142,6 @@
 
       // Start first attempt
       sendWithRetry(1);
-      case 'UPDATE_MODE':
-        mode = message.payload?.mode ?? mode;
-        console.debug('[CarbonLens] Mode updated via background:', mode);
-        sendResponse({ source: 'carbonlens-content', type: 'MODE_UPDATED', mode });
-        break;
-      default:
-        break;
-    }
-
-    return true;
-  });
-
-  function dispatchActivity(payload) {
-    if (!payload) {
-      console.warn('[CarbonLens] dispatchActivity called with empty payload');
-      return;
-    }
-
-    try {
-      console.log('[CarbonLens] Dispatching activity:', {
-        type: payload.activityType,
-        platform: currentPlatform,
-        subject: payload.subject,
-        user_email: payload.user_email,
-      });
-
-      const message = {
-        source: 'carbonlens-content',
-        type: 'ACTIVITY_DETECTED',
-        platform: currentPlatform,
-        mode,
-        payload,
-      };
-
-  chrome.runtime.sendMessage(message, (response) => {
-        // Check for runtime errors first
-        if (chrome.runtime.lastError) {
-          console.error('[CarbonLens] Runtime error sending message:', chrome.runtime.lastError.message);
-          return;
-        }
-
-        // Check response
-        if (response) {
-          if (response.acknowledged) {
-            console.log('[CarbonLens] ✅ Activity acknowledged by background script');
-          } else if (response.error) {
-            console.error('[CarbonLens] ❌ Background script error:', response.error);
-          } else {
-            console.warn('[CarbonLens] Unexpected response format:', response);
-          }
-        } else {
-          console.warn('[CarbonLens] No response from background script (may have disconnected)');
-        }
-      });
     } catch (error) {
       console.error('[CarbonLens] Error in dispatchActivity:', error);
     }
@@ -255,27 +254,56 @@
     }
 
     try {
+      // Robustly find the compose root for inline or dialog compose UIs
+      function findComposeRoot(el) {
+        if (!el) return null;
+        // Common Gmail compose container
+        let root = el.closest('div[role="dialog"]') || el.closest('div[role="region"]') || el.closest('form');
+        try {
+          if (root && (root.querySelector('input[name="subjectbox"]') || root.querySelector('div[aria-label="Message Body"]') || root.querySelector('textarea[name="to"]'))) {
+            return root;
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // Fallback: search for any open compose dialog on the page
+        try {
+          const candidates = document.querySelectorAll('div[role="dialog"], div[aria-label="New Message"], form');
+          for (const c of candidates) {
+            if (c.contains(el) || c.querySelector('input[name="subjectbox"], div[aria-label="Message Body"], textarea[name="to"]')) {
+              return c;
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        // Last resort: return null
+        return null;
+      }
+
       const handler = () => {
         try {
           console.log('[CarbonLens] Gmail send button clicked');
-          const compose = button.closest('div[role="dialog"]');
+          const compose = findComposeRoot(button);
           if (!compose) {
             console.warn('[CarbonLens] Could not find compose dialog');
             return;
           }
-          
+
           const activity = extractGmailEmailData(compose);
           if (!activity || !activity.activityType) {
             console.warn('[CarbonLens] Failed to extract email data from compose dialog');
             return;
           }
-          
+
           console.log('[CarbonLens] Extracted email data:', {
             subject: activity.subject,
             recipients: activity.recipients?.length || 0,
             hasEmail: !!activity.user_email,
           });
-          
+
           dispatchActivity(activity);
         } catch (error) {
           console.error('[CarbonLens] Error in send button handler:', error);
@@ -384,7 +412,7 @@
 
       function mouseEnterHandler(e) {
         try {
-          const compose = button.closest('div[role="dialog"]');
+          const compose = findComposeRoot(button) || button.closest('div[role="dialog"]');
           if (!compose) return;
           const emission = estimateEmailEmission(compose);
           if (!emission) return;
@@ -393,13 +421,16 @@
           tooltipEl.textContent = text;
           // Position tooltip near the button
           const rect = button.getBoundingClientRect();
-          const top = window.scrollY + rect.top - 8 - tooltipEl.offsetHeight;
-          const left = window.scrollX + rect.left + rect.width / 2 -  (tooltipEl.offsetWidth/2 || 0);
-          tooltipEl.style.left = `${Math.max(8, left)}px`;
-          tooltipEl.style.top = `${Math.max(8, top)}px`;
-          // Force reflow then show
-          void tooltipEl.offsetWidth;
-          tooltipEl.style.opacity = '1';
+          // Give the browser a tick to render tooltip so offsetHeight/offsetWidth are available
+          requestAnimationFrame(() => {
+            const top = window.scrollY + rect.top - 8 - tooltipEl.offsetHeight;
+            const left = window.scrollX + rect.left + rect.width / 2 - (tooltipEl.offsetWidth / 2 || 0);
+            tooltipEl.style.left = `${Math.max(8, left)}px`;
+            tooltipEl.style.top = `${Math.max(8, top)}px`;
+            // Force reflow then show
+            void tooltipEl.offsetWidth;
+            tooltipEl.style.opacity = '1';
+          });
         } catch (err) {
           // ignore
         }
