@@ -40,7 +40,24 @@ function buildSummary(activities) {
   let emailCount = 0;
 
   activities.forEach((activity) => {
-    const emission = activity.emission_kg || activity.emissionKg || 0;
+    // Use the new user-provided formula for email emissions when possible:
+    // CO2 (grams) ≈ C + A × S where C=0.3 g, A=15 g/MB, S=attachment MB
+    let emission = activity.emission_kg || activity.emissionKg || 0;
+    try {
+      const type = activity.activity_type || activity.activityType || 'unknown';
+      if (type === 'email') {
+        const payload = activity.payload || {};
+        const attachmentBytes = payload.attachment_bytes || payload.attachmentBytes || 0;
+        const attachmentMb = (attachmentBytes || 0) / 1_000_000;
+        const C = 0.3; // grams
+        const A = 15; // grams per MB
+        const grams = C + A * Math.max(0, attachmentMb);
+        emission = grams / 1000; // convert to kg
+      }
+    } catch (e) {
+      // fallback to stored emission
+      emission = activity.emission_kg || activity.emissionKg || 0;
+    }
     totalEmissionKg += emission;
 
     if (activity.timestamp) {

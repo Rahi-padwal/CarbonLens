@@ -242,9 +242,153 @@
         }
       };
 
+      // Tooltip support: show estimated CO₂ on hover
+      let tooltipEl = null;
+      function createTooltip() {
+        const el = document.createElement('div');
+        el.className = 'carbonlens-tooltip';
+        el.style.position = 'absolute';
+        el.style.zIndex = 2147483647; // top
+        el.style.padding = '6px 8px';
+        el.style.background = 'rgba(0,0,0,0.85)';
+        el.style.color = '#fff';
+        el.style.fontSize = '12px';
+        el.style.borderRadius = '6px';
+        el.style.boxShadow = '0 2px 8px rgba(0,0,0,0.35)';
+        el.style.pointerEvents = 'none';
+        el.style.transition = 'opacity 120ms ease-in-out';
+        el.style.opacity = '0';
+        document.body.appendChild(el);
+        return el;
+      }
+
+      function removeTooltip() {
+        if (tooltipEl && tooltipEl.parentNode) {
+          tooltipEl.parentNode.removeChild(tooltipEl);
+        }
+        tooltipEl = null;
+      }
+
+      function formatEmissionKg(kg) {
+        // Prefer grams for readability when under 1 kg
+        const grams = kg * 1000;
+        if (grams >= 1) {
+          // Show with 1 decimal if <10g, otherwise integer grams
+          if (grams < 10) return `${grams.toFixed(1)} g CO₂`;
+          return `${Math.round(grams)} g CO₂`;
+        }
+        return `${kg.toFixed(6)} kg CO₂`;
+      }
+
+      function parseSizeToMb(text) {
+        if (!text) return 0;
+        const m = String(text).match(/([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|B)/i);
+        if (!m) return 0;
+        const value = parseFloat(m[1]);
+        const unit = m[2].toUpperCase();
+        if (unit === 'B') return value / (1024 * 1024);
+        if (unit === 'KB') return value / 1024;
+        return value; // MB
+      }
+
+      function guessAttachmentTotalMb(composeRoot) {
+        try {
+          let totalMb = 0;
+          // Try to find attachment size labels in the compose root
+          // Gmail attach elements often include sizes like "234 KB" or "1.2 MB"
+          const candidates = composeRoot.querySelectorAll('div[aria-label], span, div');
+          for (const el of candidates) {
+            try {
+              const txt = el.getAttribute && el.getAttribute('aria-label') || el.innerText || el.textContent || '';
+              if (!txt) continue;
+              if (/\b(KB|MB|B)\b/i.test(txt)) {
+                const mb = parseSizeToMb(txt);
+                if (mb > 0) totalMb += mb;
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
+          return totalMb;
+        } catch (e) {
+          return 0;
+        }
+      }
+
+      function estimateEmailEmission(composeRoot) {
+        try {
+          const activity = extractGmailEmailData(composeRoot);
+          const recipients = Array.isArray(activity.recipients) ? activity.recipients.length : 1;
+          const attachmentCount = activity.attachmentCount || 0;
+          // New formula provided by user: CO2 (grams) ≈ C + A × S
+          // C = 0.3 g (base), A = 15 g per MB, S = total attachment MB
+          const BASE_G = 0.3;
+          const PER_MB_G = 15;
+
+          // Try to detect exact attachment sizes from compose if available
+          let totalMb = guessAttachmentTotalMb(composeRoot);
+          if (totalMb <= 0 && attachmentCount > 0) {
+            // fallback: assume 1 MB per attachment
+            totalMb = attachmentCount * 1;
+          }
+
+          const grams = BASE_G + PER_MB_G * totalMb;
+          // Multiply by recipients (each recipient receives a copy)
+          const totalGrams = grams * Math.max(recipients, 1);
+          const kg = totalGrams / 1000;
+          return { kg, grams: totalGrams };
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function mouseEnterHandler(e) {
+        try {
+          const compose = button.closest('div[role="dialog"]');
+          if (!compose) return;
+          const emission = estimateEmailEmission(compose);
+          if (!emission) return;
+          const text = `${formatEmissionKg(emission.kg)} will be emitted (${Math.round(emission.grams)} g total)`;
+          tooltipEl = createTooltip();
+          tooltipEl.textContent = text;
+          // Position tooltip near the button
+          const rect = button.getBoundingClientRect();
+          const top = window.scrollY + rect.top - 8 - tooltipEl.offsetHeight;
+          const left = window.scrollX + rect.left + rect.width / 2 -  (tooltipEl.offsetWidth/2 || 0);
+          tooltipEl.style.left = `${Math.max(8, left)}px`;
+          tooltipEl.style.top = `${Math.max(8, top)}px`;
+          // Force reflow then show
+          void tooltipEl.offsetWidth;
+          tooltipEl.style.opacity = '1';
+        } catch (err) {
+          // ignore
+        }
+      }
+
+      function mouseMoveHandler(e) {
+        if (!tooltipEl) return;
+        // Keep tooltip above button, recalc if size changed
+        const rect = button.getBoundingClientRect();
+        const top = window.scrollY + rect.top - 8 - tooltipEl.offsetHeight;
+        const left = window.scrollX + rect.left + rect.width / 2 - tooltipEl.offsetWidth / 2;
+        tooltipEl.style.left = `${Math.max(8, left)}px`;
+        tooltipEl.style.top = `${Math.max(8, top)}px`;
+      }
+
+      function mouseLeaveHandler(e) {
+        if (tooltipEl) {
+          tooltipEl.style.opacity = '0';
+          setTimeout(removeTooltip, 150);
+        }
+      }
+
+      button.addEventListener('mouseenter', mouseEnterHandler);
+      button.addEventListener('mousemove', mouseMoveHandler);
+      button.addEventListener('mouseleave', mouseLeaveHandler);
+
       button.addEventListener('click', handler, { capture: true, once: false });
       observedSet.add(button);
-      console.debug('[CarbonLens] Attached listener to Gmail send button');
+      console.debug('[CarbonLens] Attached listener + tooltip to Gmail send button');
     } catch (error) {
       console.error('[CarbonLens] Error attaching Gmail send listener:', error);
     }

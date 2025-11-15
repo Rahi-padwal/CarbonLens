@@ -83,6 +83,40 @@ app.register_blueprint(insights_bp, url_prefix='/api/insights')
 app.register_blueprint(meetings_bp, url_prefix='/api/meetings')
 app.register_blueprint(storage_bp, url_prefix='/api/storage')
 
+# Background Gmail poller (short-term fix for delayed inbound tracking)
+def start_gmail_poller(poll_interval_seconds: int = 60):
+    """Start a background thread that polls Gmail for new messages for
+    all users with stored Google tokens. This is a short-term measure to
+    reduce inbound tracking delay. For production, prefer Gmail push/history.
+    """
+    import threading
+    import time
+    from utils.firebase_config import get_collection
+
+    def poller():
+        print(f"[Gmail Poller] Starting poller (interval={poll_interval_seconds}s)")
+        while True:
+            try:
+                tokens_coll = get_collection('oauth_tokens')
+                query = tokens_coll.where('provider', '==', 'google').stream()
+                for doc in query:
+                    try:
+                        user_id = doc.id
+                        # Import here to avoid circular import at module load
+                        from routes.oauth_google import sync_gmail_for_user
+                        # Poll recent messages (last ~15 minutes) with small page
+                        # days_back accepts fractional days (0.011 ~= 15.8 minutes)
+                        result = sync_gmail_for_user(user_id, days_back=0.011, max_results=50)
+                        print(f"[Gmail Poller] Synced {user_id}: {result.get('processed',0)} processed")
+                    except Exception as e:
+                        print(f"[Gmail Poller] Error syncing user {doc.id}: {e}")
+            except Exception as e:
+                print(f"[Gmail Poller] Polling loop error: {e}")
+            time.sleep(poll_interval_seconds)
+
+    thread = threading.Thread(target=poller, daemon=True)
+    thread.start()
+
 # Health check endpoint
 @app.route('/api/health', methods=['GET', 'OPTIONS'])
 def health_check():
@@ -155,7 +189,15 @@ def root():
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
-    return jsonify({'error': 'Endpoint not found'}), 404
+    # Enhanced 404 logging to help diagnose missing resources
+    try:
+        req_path = request.path
+        method = request.method
+        origin = request.headers.get('Origin', '')
+        print(f"[404] Not Found: {method} {req_path} Origin={origin}")
+    except Exception:
+        print("[404] Not Found: (failed to read request details)")
+    return jsonify({'error': 'Endpoint not found', 'path': request.path}), 404
 
 @app.errorhandler(500)
 def internal_error(error):

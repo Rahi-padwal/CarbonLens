@@ -470,43 +470,18 @@ def sync_outlook(user_id):
         ]
         
         for direction, endpoint, params, timestamp_field in list_configs:
-            try:
-                response = requests.get(endpoint, headers=headers, params=params, timeout=30)
-            except Exception as neterr:
-                import traceback
-                traceback.print_exc()
-                print(f"[Outlook Sync] Network error when calling {endpoint} with params {params}: {neterr}")
-                return jsonify({
-                    'error': 'Outlook API network error',
-                    'message': str(neterr)
-                }), 502
-
-            # Log response status for debugging
-            print(f"[Outlook Sync] GET {endpoint} -> {response.status_code}")
+            response = requests.get(endpoint, headers=headers, params=params)
+            
             if response.status_code == 401:
-                # Token likely expired or invalid
-                try:
-                    print('[Outlook Sync] Response body:', response.text)
-                except Exception:
-                    pass
                 return jsonify({
                     'error': 'Token expired',
-                    'needs_refresh': True,
-                    'status_code': response.status_code,
-                    'body': response.text
+                    'needs_refresh': True
                 }), 401
-
+            
             if response.status_code != 200:
-                # Include status code and body for easier debugging in frontend
-                try:
-                    body = response.text
-                except Exception:
-                    body = '<unreadable response body>'
-                print(f"[Outlook Sync] Outlook API error {response.status_code}: {body}")
                 return jsonify({
                     'error': 'Outlook API error',
-                    'status_code': response.status_code,
-                    'message': body
+                    'message': response.text
                 }), 500
             
             messages = response.json().get('value', []) or []
