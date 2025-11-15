@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # CarbonLens - Digital Carbon Footprint Tracker
 
 A comprehensive platform for tracking and visualizing digital carbon emissions from email, meetings, cloud storage, and web browsing activities.
@@ -218,3 +219,7 @@ This project is licensed under the MIT License.
 
 Built with Flask, React, Firebase, and Chrome Extension APIs.
 
+=======
+# CarbonLens
+Carbon emission tacking (extension and dashboard).
+>>>>>>> 835409e91f00966923e788dfd5b8220767a66ad8
