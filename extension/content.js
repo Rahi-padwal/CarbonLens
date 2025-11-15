@@ -8,6 +8,20 @@
     return;
   }
 
+  // Compute emission given total MB and recipient count (top-level helper)
+  function computeEmissionFromMb(totalMb, recipientsCount) {
+    try {
+      const BASE_G = 0.3; // grams
+      const PER_MB_G = 15; // grams per MB
+      const gramsPerEmail = BASE_G + PER_MB_G * Math.max(0, totalMb || 0);
+      const recipients = Math.max(1, recipientsCount || 1);
+      const totalGrams = gramsPerEmail * recipients;
+      return { grams: totalGrams, kg: totalGrams / 1000 };
+    } catch (e) {
+      return { grams: 0, kg: 0 };
+    }
+  }
+
   const PLATFORM = {
     GMAIL: 'gmail',
     OUTLOOK: 'outlook',
@@ -55,19 +69,44 @@
     try {
       let totalMb = 0;
       if (!composeRoot) return 0;
-      const candidates = composeRoot.querySelectorAll('div[aria-label], span, div, li');
-      for (const el of candidates) {
-        try {
-          const txt = (el.getAttribute && el.getAttribute('aria-label')) || el.innerText || el.textContent || '';
-          if (!txt) continue;
-          if (/\b(KB|MB|B)\b/i.test(txt)) {
-            const mb = parseSizeToMb(txt);
+
+      // First, scan the visible text of the compose root as a whole for size patterns
+      const text = (composeRoot.innerText || composeRoot.textContent || '').toString();
+      if (text) {
+        const sizeRegex = /(?:\(|\b)([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|B)\b/gi;
+        let m;
+        while ((m = sizeRegex.exec(text)) !== null) {
+          try {
+            const token = `${m[1]} ${m[2]}`;
+            const mb = parseSizeToMb(token);
             if (mb > 0) totalMb += mb;
+          } catch (e) {
+            // ignore individual parse errors
           }
-        } catch (e) {
-          // ignore per-element errors
         }
       }
+
+      // Secondly, check common attributes where size may live (aria-label, title)
+      try {
+        const walker = composeRoot.querySelectorAll('[aria-label], [title]');
+        for (const el of walker) {
+          try {
+            const txt = (el.getAttribute('aria-label') || el.getAttribute('title') || '').toString();
+            if (!txt) continue;
+            const sizeRegex2 = /([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|B)\b/i;
+            const mm = sizeRegex2.exec(txt);
+            if (mm) {
+              const mb = parseSizeToMb(`${mm[1]} ${mm[2]}`);
+              if (mb > 0) totalMb += mb;
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+      } catch (e) {
+        // ignore walker errors
+      }
+
       return totalMb;
     } catch (e) {
       return 0;
@@ -374,25 +413,33 @@
       }
 
       function formatEmissionKg(kg) {
-        // Prefer grams for readability when under 1 kg
+        // Prefer grams for readability when under 1 kg, including fractional grams
         const grams = kg * 1000;
-        if (grams >= 1) {
-          // Show with 1 decimal if <10g, otherwise integer grams
-          if (grams < 10) return `${grams.toFixed(1)} g CO₂`;
+        if (grams < 1) {
+          // very small, show one decimal gram (e.g., 0.3 g)
+          return `${grams.toFixed(1)} g CO₂`;
+        }
+        if (grams < 10) {
+          return `${grams.toFixed(1)} g CO₂`;
+        }
+        if (grams < 1000) {
           return `${Math.round(grams)} g CO₂`;
         }
-        return `${kg.toFixed(6)} kg CO₂`;
+        // otherwise show kg with 3 decimals
+        return `${kg.toFixed(3)} kg CO₂`;
       }
 
       function parseSizeToMb(text) {
         if (!text) return 0;
-        const m = String(text).match(/([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|B)/i);
+        const m = String(text).match(/([0-9]+(?:\.[0-9]+)?)\s*(B|KB|K|MB|M|GB|G)\b/i);
         if (!m) return 0;
         const value = parseFloat(m[1]);
         const unit = m[2].toUpperCase();
         if (unit === 'B') return value / (1024 * 1024);
-        if (unit === 'KB') return value / 1024;
-        return value; // MB
+        if (unit === 'K' || unit === 'KB') return value / 1024;
+        if (unit === 'M' || unit === 'MB') return value;
+        if (unit === 'G' || unit === 'GB') return value * 1024;
+        return value; // fallback treat as MB
       }
 
       function guessAttachmentTotalMb(composeRoot) {
@@ -430,7 +477,8 @@
           const PER_MB_G = 15;
 
           // Try to detect exact attachment sizes from compose if available
-          let totalMb = guessAttachmentTotalMb(composeRoot);
+          // Use the improved computeAttachmentTotalMb() scanner
+          let totalMb = computeAttachmentTotalMb(composeRoot);
           if (totalMb <= 0 && attachmentCount > 0) {
             // fallback: assume 1 MB per attachment
             totalMb = attachmentCount * 1;
@@ -446,29 +494,64 @@
         }
       }
 
+      
+
       function mouseEnterHandler(e) {
         try {
           const compose = findComposeRoot(button) || button.closest('div[role="dialog"]');
           if (!compose) return;
-          const emission = estimateEmailEmission(compose);
+          // Initial estimate
+          let emission = estimateEmailEmission(compose);
+          if (!emission) return;
+
+          // If attachments exist but size is zero, poll briefly for sizes to appear
+          const activity = extractGmailEmailData(compose);
+          if (activity && activity.attachmentCount > 0 && (activity.attachmentBytes === 0 || activity.attachment_bytes === 0)) {
+            const start = Date.now();
+            const pollInterval = 150;
+            const poll = () => {
+              const totalMb = computeAttachmentTotalMb(compose);
+              if (totalMb > 0) {
+                const recipientCount = normalizeRecipientList(activity.recipients).length || 1;
+                emission = computeEmissionFromMb(totalMb, recipientCount);
+                activity.size_confidence = 'polled';
+                showTooltipForEmission(emission);
+                return;
+              }
+              if (Date.now() - start < 800) {
+                setTimeout(poll, pollInterval);
+              } else {
+                showTooltipForEmission(emission);
+              }
+            };
+            showTooltipForEmission(emission);
+            setTimeout(poll, pollInterval);
+            return;
+          }
+
+          showTooltipForEmission(emission);
+        } catch (err) {
+          // ignore
+        }
+      }
+
+      function showTooltipForEmission(emission) {
+        try {
           if (!emission) return;
           const gramsDisplay = emission.grams < 1 ? emission.grams.toFixed(1) : Math.round(emission.grams);
           const text = `${formatEmissionKg(emission.kg)} will be emitted (${gramsDisplay} g total)`;
-          tooltipEl = createTooltip();
+          if (!tooltipEl) tooltipEl = createTooltip();
           tooltipEl.textContent = text;
-          // Position tooltip near the button
           const rect = button.getBoundingClientRect();
-          // Give the browser a tick to render tooltip so offsetHeight/offsetWidth are available
           requestAnimationFrame(() => {
             const top = window.scrollY + rect.top - 8 - tooltipEl.offsetHeight;
             const left = window.scrollX + rect.left + rect.width / 2 - (tooltipEl.offsetWidth / 2 || 0);
             tooltipEl.style.left = `${Math.max(8, left)}px`;
             tooltipEl.style.top = `${Math.max(8, top)}px`;
-            // Force reflow then show
             void tooltipEl.offsetWidth;
             tooltipEl.style.opacity = '1';
           });
-        } catch (err) {
+        } catch (e) {
           // ignore
         }
       }
@@ -575,6 +658,15 @@
     const totalMb = computeAttachmentTotalMb(composeRoot) || 0;
     const attachmentBytes = Math.round(totalMb * 1_000_000);
 
+    // Determine size confidence for telemetry
+    let size_confidence = 'none';
+    if (totalMb > 0) size_confidence = 'exact';
+    else if (attachmentCount > 0) size_confidence = 'estimated';
+
+    // Compute emission using the user-provided formula and recipient count
+    const recipientCount = normalizeRecipientList(recipients).length || 1;
+    const emission = computeEmissionFromMb(totalMb, recipientCount);
+
     return {
       activityType: ACTIVITY_TYPE.EMAIL,
       timestamp: new Date().toISOString(),
@@ -586,6 +678,10 @@
       // include both camelCase and snake_case keys to satisfy different backends
       attachmentBytes,
       attachment_bytes: attachmentBytes,
+      // Pre-computed emission values for backend and UI
+      emission_kg: emission.kg,
+      emission_g: emission.grams,
+      size_confidence,
       direction: 'outbound',
       sender: accountEmail,
       user_email: accountEmail,
@@ -700,6 +796,14 @@
     const totalMb = computeAttachmentTotalMb(composeRoot) || 0;
     const attachmentBytes = Math.round(totalMb * 1_000_000);
 
+    // Determine size confidence
+    let size_confidence = 'none';
+    if (totalMb > 0) size_confidence = 'exact';
+    else if (attachmentCount > 0) size_confidence = 'estimated';
+
+    const recipientCount = normalizeRecipientList(recipients).length || 1;
+    const emission = computeEmissionFromMb(totalMb, recipientCount);
+
     return {
       activityType: ACTIVITY_TYPE.EMAIL,
       timestamp: new Date().toISOString(),
@@ -710,6 +814,9 @@
       attachmentCount,
       attachmentBytes,
       attachment_bytes: attachmentBytes,
+      emission_kg: emission.kg,
+      emission_g: emission.grams,
+      size_confidence,
       direction: 'outbound',
       sender: accountEmail,
       user_email: accountEmail,

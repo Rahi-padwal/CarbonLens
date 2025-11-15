@@ -49,8 +49,31 @@ def log_activity():
         return _error(str(exc)), 400
 
     try:
-        emission_kg = _calculate_emission(normalized)
-        print(f"[Activities API] Emission calculated: {emission_kg}kg")
+        # Prefer client-provided emission when available (extension pre-computes on hover/send)
+        emission_kg = None
+        try:
+            # Accept various possible keys from client
+            if raw_payload.get('emission_kg') is not None:
+                emission_kg = float(raw_payload.get('emission_kg'))
+                print(f"[Activities API] Using client-provided emission_kg: {emission_kg} kg")
+            elif raw_payload.get('emissionKg') is not None:
+                emission_kg = float(raw_payload.get('emissionKg'))
+                print(f"[Activities API] Using client-provided emissionKg: {emission_kg} kg")
+            elif raw_payload.get('emission_g') is not None:
+                emission_kg = float(raw_payload.get('emission_g')) / 1000.0
+                print(f"[Activities API] Using client-provided emission_g: {raw_payload.get('emission_g')} g -> {emission_kg} kg")
+            elif raw_payload.get('emissionG') is not None:
+                emission_kg = float(raw_payload.get('emissionG')) / 1000.0
+                print(f"[Activities API] Using client-provided emissionG: {raw_payload.get('emissionG')} g -> {emission_kg} kg")
+        except Exception as e:
+            print(f"[Activities API] Warning: could not parse client emission value: {e}")
+
+        if emission_kg is None or emission_kg == 0:
+            emission_kg = _calculate_emission(normalized)
+            print(f"[Activities API] Emission calculated: {emission_kg}kg")
+        else:
+            # ensure numeric float
+            emission_kg = float(emission_kg)
         
         activity_doc = _build_activity_document(normalized, emission_kg, raw_payload)
         print(f"[Activities API] Activity document built: activity_type={activity_doc.get('activity_type')}, user_email={activity_doc.get('user_email')}, timestamp={activity_doc.get('timestamp')}")
